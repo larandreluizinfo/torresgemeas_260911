@@ -50,6 +50,15 @@
   .shop div { display:flex; align-items:center; justify-content:space-between; gap:.5rem; background:#042f2e; border:1px solid #14b8a6; border-radius:8px; padding:.5rem .7rem; font-size:.9rem; }
   #touch { display:none; gap:.4rem; flex-wrap:wrap; margin-top:.5rem; justify-content:center; }
   #touch button { background:#134e4a; color:#fff; min-width:48px; }
+  #tutOverlay { position:fixed; inset:0; background:rgba(2,6,23,.82); display:none; align-items:center; justify-content:center; z-index:50; padding:1rem; }
+  #tutBox { background:#042f2e; border:2px solid var(--accent); border-radius:16px; max-width:560px; width:100%; padding:1.2rem 1.3rem; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  #tutBox h2 { margin:.2rem 0 .5rem; }
+  #tutDots { display:flex; gap:.35rem; margin:.6rem 0; }
+  #tutDots span { width:26px; height:6px; border-radius:99px; background:#134e4a; }
+  #tutDots span.on { background:var(--accent); }
+  #tutKeys { display:flex; gap:.4rem; flex-wrap:wrap; margin:.6rem 0; }
+  #tutBox .tutBtns { display:flex; gap:.5rem; margin-top:.8rem; flex-wrap:wrap; }
+  #tutPractice { background:#021a19; border:1px dashed #2dd4bf; border-radius:10px; padding:.6rem; font-size:.9rem; min-height:52px; }
   footer { text-align:center; opacity:.6; font-size:.8rem; padding:1.5rem; }
 </style>
 </head>
@@ -100,6 +109,19 @@
     </div>
   </section>
 </main>
+<div id="tutOverlay"><div id="tutBox">
+  <h2 id="tutTitle">📘 Tutorial</h2>
+  <div id="tutDots"><span></span><span></span><span></span><span></span><span></span></div>
+  <div id="tutText"></div>
+  <div id="tutKeys"></div>
+  <div id="tutPractice">💡 Pratique aqui: aperte as teclas indicadas.</div>
+  <label style="margin-top:.6rem"><input type="checkbox" id="tutSkip"> Não mostrar de novo</label>
+  <div class="tutBtns">
+    <button id="tutBack" class="btn-alt">← Voltar</button>
+    <button id="tutNext" class="btn-join" style="flex:1">Próximo →</button>
+    <button id="tutJump" class="btn-alt">Pular tutorial</button>
+  </div>
+</div></div>
 <footer>Futevôlei P2P via Trystero · GitHub Pages</footer>
 
 <script type="module">
@@ -138,15 +160,16 @@ const powB = () => 50*store.up('pow');
 const $ = id => document.getElementById(id);
 let mode='lobby', room=null, chan={}, selfId='off-'+Math.random().toString(36).slice(2);
 let mySide=null, isHost=false, isBot=false, spectating=false;
-let me={ name:'Craque', color:'#facc15', x:240, y:GROUND, vy:0, join:Date.now() };
-let foe={ name:'?', color:'#22d3ee', x:720, y:GROUND, vy:0 };
-let ball={ x:240, y:400, vx:0, vy:0, held:true };
+let me={ name:'Craque', color:'#facc15', x:240, y:GROUND, vy:0, vx:0, face:1, kickT:0, runPh:0 };
+let foe={ name:'?', color:'#22d3ee', x:720, y:GROUND, vy:0, vx:0, face:-1, kickT:0, runPh:0 };
+let ball={ x:240, y:400, vx:0, vy:0, spin:0, held:true };
 let score={ L:0, R:0 }, phase='serve', server='L', phaseT=0;
 let myLevel=1, botLevel=1, lastNet=0;
 let members=new Map();
 let cur=null;
 let keys={};
-let botFill=false, servePending=false, camMode='fp', cam={x:480}, shake=0, ballRot=0, parts=[], ballTrail=[], lastScoreSum=0;
+let botFill=false, servePending=false, camMode='fp', cam={x:480}, shake=0, ballRot=0, parts=[], ballTrail=[], lastScoreSum=0, dust=[];
+let wind=0, tutStep=0, tutDone=localStorage.getItem('tf-tut')==='1', tutNeed={move:false,jump:false,key:false};
 
 const rndName=()=>'Craque'+Math.floor(100+Math.random()*900);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -184,34 +207,75 @@ async function preconnect(){
   catch{ $('status').textContent='⚠️ P2P indisponível — dá para treinar contra o BOT.'; }
 }
 
+// ---------- tutorial (obrigatório antes da partida) ----------
+let pendingStart=null;
+const TUTS=[
+  { t:'🏖️ Bem-vindo ao futevôlei!', h:'Jogo 1x1 até <b>10 pontos</b>. Cada 2 pontos você sobe de <b>fase (1→5)</b> e ganha moedas. Quem faz a bola cair na areia do adversário marca ponto. Primeiro: aprenda a se mover.', keys:[] },
+  { t:'🚶 Passo 1 — Movimentação', h:'Segure <b>A / D</b> ou <b>← / →</b> para correr na areia. Repare: correr levanta <b>poeira</b> e o jogador ganha velocidade aos poucos (atrito da areia). <b>Pratique agora:</b> segure A e D.', keys:['A','D'] },
+  { t:'🦘 Passo 2 — Pulo', h:'Aperte <b>W / ↑ / Espaço</b> para saltar (impulsão). No ar você pode se deslocar. <b>Pratique agora:</b> pule 1 vez.', keys:['W'] },
+  { t:'🦶 Passo 3 — Levantada e finalização', h:'Para <b>sacar</b> e <b>finalizar</b>, complete a <b>sequência de toques</b> (J=PEITO, K=CABEÇA, L=OMBRO, U=COXA, I=PÉ, O=SHARK). Errar zera a sequência. Fases altas = sequências maiores. <b>Pratique:</b> aperte J e K.', keys:['J','K','L'] },
+  { t:'🏆 Passo 4 — Valendo!', h:'Na partida: <b>▼ amarelo</b> = sua levantada. Círculo <b>verde</b> na bola = chegue perto para finalizar. Fique do seu lado da rede, use a câmera 🎥 e o chat 💬. Boa partida!', keys:[] },
+];
+function showTutorial(cb){
+  pendingStart=cb; tutStep=0; tutNeed={move:false,jump:false,key:false};
+  $('tutOverlay').style.display='flex';
+  if($('tutSkip')) $('tutSkip').checked=tutDone;
+  renderTut(); updateTutPractice('💡 Pratique aqui: siga o passo atual.');
+}
+function renderTut(){
+  const s=TUTS[tutStep];
+  $('tutTitle').textContent=s.t;
+  $('tutText').innerHTML=`<p style="line-height:1.5">${s.h}</p>`;
+  $('tutKeys').innerHTML=s.keys.map(k=>`<span class="key next">${k}</span>`).join('');
+  [...$('tutDots').children].forEach((d,i)=>d.classList.toggle('on',i<=tutStep));
+  $('tutBack').style.visibility=tutStep===0?'hidden':'visible';
+  $('tutNext').textContent=tutStep===TUTS.length-1?'🏁 Começar partida →':'Próximo →';
+}
+function updateTutPractice(msg){ const p=$('tutPractice'); if(p) p.innerHTML=msg; }
+function closeTutorial(start){
+  tutDone=$('tutSkip')&&$('tutSkip').checked;
+  localStorage.setItem('tf-tut',tutDone?'1':'0');
+  $('tutOverlay').style.display='none';
+  if(start&&pendingStart){ const f=pendingStart; pendingStart=null; f(); }
+  else pendingStart=null;
+}
+$('tutBack').onclick=()=>{ if(tutStep>0){tutStep--;renderTut();} };
+$('tutNext').onclick=()=>{ sfx.ok(); if(tutStep<TUTS.length-1){tutStep++;renderTut();} else closeTutorial(true); };
+$('tutJump').onclick=()=>closeTutorial(true);
+
 // ---------- entrar ----------
 async function enterServer(serverId,label,offline){
   me.name=($('name').value.trim()||rndName()).slice(0,16);
   me.color=$('color').value||'#facc15'; me.join=Date.now();
   score={L:0,R:0}; myLevel=1; members.clear(); cur=null; botFill=false; servePending=false; lastScoreSum=0; camMode='fp';
+  mySide='L'; me.x=240; me.vx=0; me.vy=0; foe.x=720;
   clearTimeout(window.__botT); ac();
   if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
   $('lobbyScreen').style.display='none'; $('gameScreen').style.display='block';
   $('hServer').textContent=label; $('score').textContent='0 : 0'; $('hLevel').textContent='1';
   renderShop('shopGame'); addChat('📢',`Você entrou em ${label} como ${me.name}.`);
-  resetPositions();
-  if(offline){ mode='offline'; isBot=true; mySide='L'; isHost=true; spectating=false; server='L'; phase='serve'; phaseT=performance.now(); toast('Treino contra o BOT 🤖 — vença 10 pontos na areia!'); startCombo(serveCombo()); return; }
-  try{
-    const joinRoom=window.__joinRoom||(await import('https://esm.run/trystero')).joinRoom;
-    room=joinRoom({appId:APP_ID},serverId); mode='online'; isBot=false;
-    chan.hello=channel(room,'f-hello'); chan.pos=channel(room,'f-pos');
-    chan.snap=channel(room,'f-snap'); chan.ev=channel(room,'f-ev'); chan.chat=channel(room,'f-chat');
-    members.set(selfId,{name:me.name,color:me.color,join:me.join});
-    chan.hello.on(m=>{ if(m){ members.set(m.from,m); assign(); } });
-    chan.pos.on(m=>{ if(m&&m.from!==selfId){ foe.x=m.x; foe.y=m.y; foe.vy=m.vy||0; if(m.name){foe.name=m.name;foe.color=m.color;} } });
-    chan.snap.on(s=>{ if(!isHost&&s){ const sum=s.score.L+s.score.R; if(sum>lastScoreSum){ sfx.point(); } lastScoreSum=sum; score=s.score; phase=s.phase; server=s.server; if(s.phase==='rally')servePending=false; phaseT=performance.now(); if(s.ball){ball={...s.ball};} if(s.foe&&mySide){ const o=mySide==='L'?s.pR:s.pL; if(o){foe.x=o.x;foe.y=o.y;}} updateScore(); } });
-    chan.ev.on(e=>{ if(!e)return; if(e.t==='serveHit'&&isHost) doServe(e.side,e.pow); if(e.t==='hit'&&isHost) doHit(e.side,e.pow); });
-    chan.chat.on(m=>{ if(m) addChat(m.name,m.text); });
-    onJ(room,pid=>{ try{chan.hello.send({...me,from:selfId},pid);}catch{} assign(); });
-    onL(room,pid=>{ members.delete(pid); assign(); addChat('🚪','Alguém saiu.'); });
-    chan.hello.send({...me,from:selfId}); assign();
-    toast('Aguardando parceiro… o jogo começa com 2 na areia.');
-  }catch{ mode='offline'; isBot=true; mySide='L'; isHost=true; server='L'; phase='serve'; phaseT=performance.now(); startCombo(serveCombo()); }
+  resetPositions(); draw(performance.now());
+  const begin=async ()=>{
+    resetPositions();
+    if(offline){ mode='offline'; isBot=true; mySide='L'; isHost=true; spectating=false; server='L'; phase='serve'; phaseT=performance.now(); sfx.whistle(); toast('Treino contra o BOT 🤖 — vença 10 pontos na areia!'); startCombo(serveCombo()); return; }
+    try{
+      const joinRoom=window.__joinRoom||(await import('https://esm.run/trystero')).joinRoom;
+      room=joinRoom({appId:APP_ID},serverId); mode='online'; isBot=false;
+      chan.hello=channel(room,'f-hello'); chan.pos=channel(room,'f-pos');
+      chan.snap=channel(room,'f-snap'); chan.ev=channel(room,'f-ev'); chan.chat=channel(room,'f-chat');
+      members.set(selfId,{name:me.name,color:me.color,join:me.join});
+      chan.hello.on(m=>{ if(m){ members.set(m.from,m); assign(); } });
+      chan.pos.on(m=>{ if(m&&m.from!==selfId){ foe.x=m.x; foe.y=m.y; foe.vy=m.vy||0; if(m.name){foe.name=m.name;foe.color=m.color;} } });
+      chan.snap.on(s=>{ if(!isHost&&s){ const sum=s.score.L+s.score.R; if(sum>lastScoreSum){ sfx.point(); } lastScoreSum=sum; score=s.score; phase=s.phase; server=s.server; if(s.phase==='rally')servePending=false; phaseT=performance.now(); if(s.ball){ball={...s.ball};} if(s.foe&&mySide){ const o=mySide==='L'?s.pR:s.pL; if(o){foe.x=o.x;foe.y=o.y;}} updateScore(); } });
+      chan.ev.on(e=>{ if(!e)return; if(e.t==='serveHit'&&isHost) doServe(e.side,e.pow); if(e.t==='hit'&&isHost) doHit(e.side,e.pow); });
+      chan.chat.on(m=>{ if(m) addChat(m.name,m.text); });
+      onJ(room,pid=>{ try{chan.hello.send({...me,from:selfId},pid);}catch{} assign(); });
+      onL(room,pid=>{ members.delete(pid); assign(); addChat('🚪','Alguém saiu.'); });
+      chan.hello.send({...me,from:selfId}); assign();
+      toast('Aguardando parceiro… o jogo começa com 2 na areia.');
+    }catch{ mode='offline'; isBot=true; mySide='L'; isHost=true; server='L'; phase='serve'; phaseT=performance.now(); startCombo(serveCombo()); }
+  };
+  if(tutDone){ begin(); } else { mode='tutorial'; showTutorial(begin); }
 }
 function assign(){
   const ms=[...members.entries()].sort((a,b)=>a[1].join-b[1].join||(a[0]<b[0]?-1:1));
@@ -228,8 +292,8 @@ function assign(){
     else if(players.length===1&&!botFill){ clearTimeout(window.__botT); window.__botT=setTimeout(()=>{ if(mode!=='online')return; if(members.size<=1){ botFill=true; isBot=true; foe={name:'BOT 🤖',color:'#22d3ee',x:720,y:GROUND,vy:0}; mySide='L'; isHost=true; score={L:0,R:0}; myLevel=1; lastScoreSum=0; server='L'; servePending=false; newRound(); toast('🤖 Ninguém apareceu — o BOT entrou na areia!'); } },6000); }
   }
 }
-function leave(){ try{room&&room.leave&&room.leave();}catch{} room=null; mode='lobby'; cur=null; botFill=false; clearTimeout(window.__botT); $('gameScreen').style.display='none'; $('lobbyScreen').style.display='block'; renderShop('shop'); }
-function resetPositions(){ me.x=mySide==='R'?720:240; me.y=GROUND; me.vy=0; foe.x=mySide==='L'?720:240; foe.y=GROUND; ball={x:server==='L'?200:760,y:400,vx:0,vy:0,held:true}; cam.x=me.x; ballTrail.length=0; }
+function leave(){ try{room&&room.leave&&room.leave();}catch{} room=null; mode='lobby'; cur=null; botFill=false; pendingStart=null; $('tutOverlay').style.display='none'; clearTimeout(window.__botT); $('gameScreen').style.display='none'; $('lobbyScreen').style.display='block'; renderShop('shop'); }
+function resetPositions(){ me.x=mySide==='R'?720:240; me.y=GROUND; me.vy=0; me.vx=0; me.kickT=0; foe.x=mySide==='L'?720:240; foe.y=GROUND; foe.vy=0; foe.vx=0; foe.kickT=0; ball={x:server==='L'?200:760,y:400,vx:0,vy:0,spin:0,held:true}; cam.x=me.x; ballTrail.length=0; dust.length=0; wind=(Math.random()-.5)*60; }
 
 // ---------- combos (levantada + finalização) ----------
 function serveCombo(){ const lv=ownLevel(); const pool=POOL[lv]; const seq=[]; for(let i=0;i<serveLen(lv);i++) seq.push(pool[Math.floor(Math.random()*pool.length)]); return {type:'serve',seq,idx:0,deadline:performance.now()+8000}; }
@@ -262,24 +326,31 @@ function onComboDone(type){
 }
 
 // ---------- física / regras (autoridade do host) ----------
+function sandPuff(x,n){ for(let i=0;i<(n||8);i++) dust.push({x:x+(Math.random()-.5)*16,y:GROUND+4,vx:(Math.random()-.5)*120,vy:-40-Math.random()*120,life:.4+Math.random()*.3}); }
 function doServe(side,pow){
   if(phase!=='serve') return;
   const fromLeft=side==='L';
-  ball={ x:fromLeft?200:760, y:360, vx:(fromLeft?1:-1)*(340+pow), vy:-560, held:false };
+  const kicker=fromLeft?(mySide==='L'?me:foe):(mySide==='R'?me:foe);
+  if(kicker) kicker.kickT=.35;
+  ball={ x:fromLeft?200:760, y:360, vx:(fromLeft?1:-1)*(340+pow), vy:-560, spin:(fromLeft?1:-1)*4, held:false };
   phase='rally'; phaseT=performance.now(); servePending=false;
-  sfx.serve(); burst(ball.x,ball.y,'#fef9c3',12,220); broadcast();
+  sfx.serve(); sfx.thump(); burst(ball.x,ball.y,'#fef9c3',12,220); sandPuff(ball.x,6); broadcast();
 }
 function doHit(side,pow){
   if(phase!=='rally') return;
   const fromLeft=side==='L';
   if((fromLeft&&ball.x>NET_X)||(!fromLeft&&ball.x<NET_X)) return;
-  // chute de futevôlei: mais arco, menos velocidade horizontal que o vôlei
-  ball.vy=-(470+pow*1.3); ball.vx=(fromLeft?1:-1)*(380+pow)+((ball.x-(fromLeft?me.x:foe.x))*-1.1||0);
-  sfx.hit(); shake=8; burst(ball.x,ball.y,'#fde68a',16,320); broadcast();
+  const kicker=fromLeft?(mySide==='L'?me:foe):(mySide==='R'?me:foe);
+  if(kicker) kicker.kickT=.4;
+  // chute de futevôlei: arco realista + efeito (spin) + influência da posição do corpo
+  const reach=Math.max(0,1-Math.abs(ball.x-(fromLeft?(mySide==='L'?me.x:foe.x):(mySide==='R'?me.x:foe.x)))/130);
+  ball.vy=-(470+pow*1.3)*(0.85+0.3*reach); ball.vx=(fromLeft?1:-1)*(380+pow)+((ball.x-(fromLeft?me.x:foe.x))*-1.1||0);
+  ball.spin=(fromLeft?1:-1)*(3+Math.random()*4);
+  sfx.hit(); sfx.thump(); shake=8; burst(ball.x,ball.y,'#fde68a',16,320); broadcast();
 }
 function point(winner){
   score[winner]++; lastScoreSum=score.L+score.R; updateScore(); checkLevel();
-  sfx.point(); shake=6; burst(ball.x,GROUND-12,winner===mySide?'#22c55e':'#ef4444',22,380);
+  sfx.point(); sfx.whistle(); shake=6; burst(ball.x,GROUND-12,winner===mySide?'#22c55e':'#ef4444',22,380); sandPuff(ball.x,10);
   if(score[winner]>=WIN_SCORE){ phase='end'; const iWon=(winner===mySide); toast(iWon?'🏆 VOCÊ VENCEU NA AREIA! +50 🪙':'😅 Derrota. Bora revanche na praia!'); if(iWon){store.coins+=50;renderShop('shopGame');} broadcast(); setTimeout(()=>{ if(mode!=='lobby'){ score={L:0,R:0}; myLevel=1; server=winner; newRound(); } },4000); return; }
   server=winner; newRound(); broadcast();
 }
@@ -294,14 +365,22 @@ function checkLevel(){
 }
 function stepHost(dt){
   if(phase!=='rally') return;
-  ball.vy+=GRAV*dt; ball.x+=ball.vx*dt; ball.y+=ball.vy*dt;
-  if(Math.abs(ball.x-NET_X)<BALL_R+4&&ball.y>NET_TOP){ ball.x+=ball.x<NET_X?-6:6; ball.vx*=-0.45; }
+  // vento + arrasto do ar + efeito magnus (spin curva a bola)
+  ball.vy+=(GRAV-140)*dt; ball.vx+=(wind-ball.vx*0.12)*dt; ball.vy+=-ball.spin*36*dt;
+  ball.vx*= (1-0.12*dt); ball.vy*=(1-0.02*dt);
+  ball.x+=ball.vx*dt; ball.y+=ball.vy*dt; ball.spin*= (1-0.4*dt);
+  // fita da rede: bola raspando perde força e pode cair colada
+  if(Math.abs(ball.x-NET_X)<BALL_R+5&&ball.y>NET_TOP-6&&ball.y<GROUND){
+    if(ball.y<NET_TOP+10){ ball.vy*=-0.25; ball.vx*=0.3; ball.y=NET_TOP-8; }
+    else { ball.x+=ball.x<NET_X?-6:6; ball.vx*=-0.42; ball.spin*=-0.5; }
+    burst(NET_X,ball.y,'#e2e8f0',4,120);
+  }
   if(ball.x<20){ball.x=20;ball.vx*=-0.8;} if(ball.x>W-20){ball.x=W-20;ball.vx*=-0.8;}
   for(const p of [{x:me.x,y:me.y-38},{x:foe.x,y:foe.y-38}]){
     const dx=ball.x-p.x,dy=ball.y-p.y,d=Math.hypot(dx,dy);
     if(d<BALL_R+22&&d>0){ ball.x=p.x+dx/d*(BALL_R+22); ball.y=p.y+dy/d*(BALL_R+22); ball.vx*=0.6; }
   }
-  if(ball.y>=GROUND-BALL_R){ point(ball.x<NET_X?'R':'L'); }
+  if(ball.y>=GROUND-BALL_R){ sandPuff(ball.x,14); point(ball.x<NET_X?'R':'L'); }
   if(!spectating&&phase==='rally'){
     const mine=mySide==='L'?ball.x<NET_X:ball.x>NET_X;
     const near=Math.abs(ball.x-me.x)<130&&ball.y>200;
@@ -317,10 +396,15 @@ function stepBot(dt){
   botLevel=Math.min(5,1+Math.floor(score.R/2));
   const tx=ball.x<NET_X?700:Math.max(NET_X+60,Math.min(W-40,ball.x+(Math.random()-.5)*30));
   const sp=300*(1+.08*botLevel);
+  const prev=foe.x;
   if(Math.abs(foe.x-tx)>8) foe.x+=Math.sign(tx-foe.x)*sp*dt;
-  if(ball.x>NET_X&&ball.y>340&&foe.y>=GROUND){ foe.vy=-jmpV(); }
+  foe.vx=(foe.x-prev)/Math.max(dt,1e-4); foe.face=foe.vx>=0?1:-1;
+  if(Math.abs(foe.vx)>120&&foe.y>=GROUND) foe.runPh+=dt*Math.abs(foe.vx)/40;
+  if(foe.kickT>0)foe.kickT-=dt;
+  foe.vy+=GRAV*dt; foe.y+=foe.vy*dt; if(foe.y>=GROUND){foe.y=GROUND;foe.vy=0;}
+  if(ball.x>NET_X&&ball.y>340&&foe.y>=GROUND){ foe.vy=-jmpV(); sandPuff(foe.x,6); }
   if(phase==='rally'&&ball.x>NET_X&&Math.abs(ball.x-foe.x)<110&&ball.y>200&&Math.random()<dt*(1.2+botLevel*.5)){
-    ball.vy=-(470+50*botLevel); ball.vx=-(380+50*botLevel);
+    foe.kickT=.4; ball.vy=-(470+50*botLevel); ball.vx=-(380+50*botLevel); ball.spin=-4; sfx.thump();
   }
 }
 
@@ -328,14 +412,24 @@ function stepBot(dt){
 const cv=$('cv'),ctx=cv.getContext('2d');
 let last=performance.now(),accSnap=0,accPos=0;
 function step(dt,now){
-  if(mode!=='online'&&mode!=='offline') return;
+  if(mode!=='online'&&mode!=='offline'&&mode!=='tutorial') return;
+  if(mode==='tutorial'){ draw(now); return; }
   if(!spectating){
-    let vx=0; if(keys['a']||keys['arrowleft'])vx-=1; if(keys['d']||keys['arrowright'])vx+=1;
-    me.x+=vx*spd()*dt;
+    // aceleração + atrito da areia (mais realista que velocidade instantânea)
+    let dir=0; if(keys['a']||keys['arrowleft'])dir-=1; if(keys['d']||keys['arrowright'])dir+=1;
+    const maxV=spd(), acc=2400, fri=2600;
+    me.vx+=dir*acc*dt;
+    if(dir===0){ const s=Math.sign(me.vx); me.vx-=s*Math.min(Math.abs(me.vx),fri*dt); }
+    me.vx=Math.max(-maxV,Math.min(maxV,me.vx));
+    me.x+=me.vx*dt;
+    if(dir!==0){ me.face=dir; me.runPh+=dt*Math.abs(me.vx)/40; if(me.y>=GROUND&&Math.abs(me.vx)>120&&Math.random()<dt*8) dust.push({x:me.x-dir*10,y:GROUND+4,vx:-dir*60+(Math.random()-.5)*60,vy:-30-Math.random()*60,life:.35}); }
     const lo=mySide==='R'?NET_X+24:24, hi=mySide==='R'?W-24:NET_X-24;
-    me.x=Math.max(lo,Math.min(hi,me.x));
-    if((keys['w']||keys['arrowup']||keys[' '])&&me.y>=GROUND){ me.vy=-jmpV(); }
-    me.vy+=GRAV*dt; me.y+=me.vy*dt; if(me.y>=GROUND){me.y=GROUND;me.vy=0;}
+    if(me.x<lo){me.x=lo;me.vx=0;} if(me.x>hi){me.x=hi;me.vx=0;}
+    if((keys['w']||keys['arrowup']||keys[' '])&&me.y>=GROUND){ me.vy=-jmpV(); sandPuff(me.x,7); sfx.jump(); }
+    me.vy+=GRAV*dt; me.y+=me.vy*dt;
+    if(me.y>=GROUND){ if(me.vy>500){sandPuff(me.x,8);} me.y=GROUND; me.vy=0; }
+    if(me.kickT>0)me.kickT-=dt;
+    if(foe.kickT>0)foe.kickT-=dt;
   }
   if(!spectating&&phase==='serve'&&server===mySide&&(mode==='online'||mode==='offline')&&!servePending){
     if(!cur||cur.type!=='serve'||now>cur.deadline) startCombo(serveCombo());
@@ -347,8 +441,10 @@ function step(dt,now){
       if(mine&&Math.abs(ball.x-me.x)<120&&ball.y>200&&(!cur||cur.type!=='hit')) startCombo(hitCombo()); }
   }
   stepBot(dt);
-  ballRot+=ball.vx*dt*.02;
+  ballRot+=ball.vx*dt*.02+ (ball.spin||0)*dt*1.4;
   for(let i=parts.length-1;i>=0;i--){ const p=parts[i]; p.vy+=900*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=dt; if(p.life<=0||p.y>GROUND+30)parts.splice(i,1); }
+  for(let i=dust.length-1;i>=0;i--){ const d=dust[i]; d.x+=d.vx*dt; d.y+=d.vy*dt; d.vy+=500*dt; d.life-=dt; if(d.life<=0)dust.splice(i,1); }
+  if(dust.length>160)dust.splice(0,dust.length-160);
   if(shake>0)shake=Math.max(0,shake-dt*40);
   if(cur&&now>cur.deadline){ if(cur.type==='serve'){ clearCombo('⏰ Tempo esgotado na levantada!'); if(isHost&&(server===mySide||isBot&&server==='R')){ point(server==='L'?'R':'L'); } } else { clearCombo('A bola passou…'); cur=null; } }
   if(mode==='online'){ accPos+=dt; if(accPos>1/15&&!spectating){ accPos=0; try{chan.pos.send({from:selfId,x:me.x,y:me.y,vy:me.vy,name:me.name,color:me.color});}catch{} }
@@ -370,8 +466,11 @@ const sfx={
   ok:()=>{ beep(520,.08,'sine',.12); setTimeout(()=>beep(780,.1,'sine',.12),70); },
   err:()=>beep(160,.2,'sawtooth',.1),
   hit:()=>beep(190,.12,'square',.18,-110),
+  thump:()=>{ const a=ac(); if(!a)return; try{ const b=a.createBuffer(1,a.sampleRate*0.09,a.sampleRate),d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2); const s=a.createBufferSource(); s.buffer=b; const f=a.createBiquadFilter(); f.type='lowpass'; f.frequency.value=900; const g=a.createGain(); g.gain.value=.5; s.connect(f); f.connect(g); g.connect(a.destination); s.start(); }catch{} },
+  jump:()=>beep(300,.09,'sine',.06,220),
+  whistle:()=>{ beep(2200,.35,'square',.08); setTimeout(()=>beep(2200,.5,'square',.08),180); },
   serve:()=>{ beep(440,.1,'sine',.14,440); },
-  point:()=>{ beep(660,.12,'sine',.14); setTimeout(()=>beep(990,.22,'sine',.14),110); },
+  point:()=>{ beep(660,.12,'sine',.14); setTimeout(()=>beep(990,.22,'sine',.14),110); try{ const a=ac(); if(a){ for(let i=0;i<3;i++) setTimeout(()=>beep(500+Math.random()*800,.08,'triangle',.05),200+i*120); } }catch{} },
   coin:()=>{ beep(880,.07,'square',.07); setTimeout(()=>beep(1320,.12,'square',.07),70); },
 };
 function camBtn(){ const b=$('btnCam'); if(b)b.textContent=camMode==='fp'?'🎥 1ª pessoa':'🎥 Lateral'; }
@@ -383,20 +482,46 @@ const crowd=[]; (function(){ let s=123456789; const R=()=>{ s=(s*1103515245+1234
   for(let r=0;r<3;r++)for(let i=0;i<70;i++)crowd.push({x:-600+R()*2160,y:120+r*26,c:cols[(R()*cols.length)|0]}); })();
 
 function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
-function drawPlayer(x,y,color,name,isMe){
-  ctx.fillStyle='rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(x,GROUND+10,22,6,0,0,7); ctx.fill();
-  // sombra/areia nos pés
-  ctx.fillStyle='#451a03'; ctx.fillRect(x-11,y-14,9,14); ctx.fillRect(x+2,y-14,9,14);
+function drawPlayer(x,y,color,name,isMe,p){
+  p=p||me;
+  const air=Math.max(0,GROUND-y)/220; // 0 no chão, ~1 no pulo alto
+  const sw=Math.sin((p.runPh||0)*9);
+  const moving=Math.abs(p.vx||0)>40&&y>=GROUND;
+  // sombra dinâmica (menor quando pula)
+  ctx.fillStyle='rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(x,GROUND+10,22-7*Math.min(1,air),6-2*Math.min(1,air),0,0,7); ctx.fill();
+  const kick=(p.kickT||0)>0?(p.kickT||0)/.4:0;
+  const legSwing=moving?sw*9:0;
+  // pernas (com chute animado)
+  ctx.strokeStyle='#8d5a2b'; ctx.lineWidth=7; ctx.lineCap='round';
+  const hipY=y-28;
+  ctx.beginPath(); ctx.moveTo(x-4,hipY); ctx.lineTo(x-8+legSwing*.6,y-2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+4,hipY);
+  if(kick>0){ ctx.lineTo(x+(p.face||1)*(10+14*kick),y-10-14*kick); }
+  else ctx.lineTo(x+8-legSwing*.6,y-2);
+  ctx.stroke();
+  // pés descalços
+  ctx.fillStyle='#6b3f16';
+  ctx.beginPath(); ctx.ellipse(x-8+legSwing*.6,y-2,6,3,0,0,7); ctx.fill();
   // shorts
-  ctx.fillStyle='#0f172a'; roundRect(x-14,y-30,28,18,5); ctx.fill();
+  ctx.fillStyle='#0f172a'; roundRect(x-14,y-32,28,16,5); ctx.fill();
+  // tronco inclinado na corrida + braços
+  const lean=moving?Math.sign(p.vx||1)*4:0;
+  ctx.strokeStyle='#8d5a2b'; ctx.lineWidth=6;
+  const shY=y-54;
+  ctx.beginPath(); ctx.moveTo(x-10+lean,shY+4); ctx.lineTo(x-18+lean-sw*6,shY+20); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+10+lean,shY+4);
+  if(kick>0) ctx.lineTo(x+20,shY-6-10*kick);
+  else ctx.lineTo(x+18+lean+sw*6,shY+20);
+  ctx.stroke();
   // camisa
-  ctx.fillStyle=color; roundRect(x-15,y-58,30,32,8); ctx.fill();
-  ctx.fillStyle='rgba(0,0,0,.3)'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.fillText(isMe?'10':'7',x,y-36);
-  // cabeça
-  ctx.fillStyle='#fcd9b8'; ctx.beginPath(); ctx.arc(x,y-68,13,0,7); ctx.fill();
-  ctx.fillStyle='#1f2937'; ctx.beginPath(); ctx.arc(x,y-71,13,Math.PI,0); ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='bold 12px sans-serif'; ctx.fillText((name||'?').slice(0,10)+(isMe?' (você)':''),x,y-90);
-  if(isMe){ ctx.fillStyle='#facc15'; ctx.font='bold 11px sans-serif'; ctx.fillText('Nv '+ownLevel(),x,y-104); }
+  ctx.fillStyle=color; roundRect(x-15+lean,y-60,30,32,8); ctx.fill();
+  ctx.fillStyle='rgba(0,0,0,.3)'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.fillText(isMe?'10':'7',x+lean,y-38);
+  // cabeça com movimento
+  const hy=y-70-(air*4);
+  ctx.fillStyle='#fcd9b8'; ctx.beginPath(); ctx.arc(x+lean,hy,13,0,7); ctx.fill();
+  ctx.fillStyle='#1f2937'; ctx.beginPath(); ctx.arc(x+lean,hy-3,13,Math.PI,0); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='bold 12px sans-serif'; ctx.fillText((name||'?').slice(0,10)+(isMe?' (você)':''),x,hy-22);
+  if(isMe){ ctx.fillStyle='#facc15'; ctx.font='bold 11px sans-serif'; ctx.fillText('Nv '+ownLevel(),x,hy-36); }
 }
 function drawWorld(now){
   const t=now/1000;
@@ -425,13 +550,28 @@ function drawWorld(now){
   ctx.beginPath(); ctx.moveTo(-600,GROUND); ctx.lineTo(W+600,GROUND); ctx.stroke();
   ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=3;
   ctx.strokeRect(60,GROUND-86,360,86); ctx.strokeRect(540,GROUND-86,360,86);
+  // coqueiros + guarda-sol (clima de praia)
+  ctx.fillStyle='#7c2d12'; ctx.fillRect(-420,120,16,90); ctx.fillRect(880,110,16,100);
+  ctx.fillStyle='#15803d';
+  for(const [px,py] of [[-412,112],[888,102]]){ for(let i=0;i<5;i++){ const a=i/5*6.28+t*.15; ctx.beginPath(); ctx.ellipse(px+Math.cos(a)*26,py+Math.sin(a)*10,26,9,a,0,7); ctx.fill(); } }
+  ctx.fillStyle='#f43f5e'; ctx.beginPath(); ctx.arc(-140,196,34,Math.PI,0); ctx.fill();
+  ctx.fillStyle='#78350f'; ctx.fillRect(-142,196,4,36);
   // rede de futevôlei (mais baixa)
   ctx.fillStyle='#fefce8'; ctx.fillRect(NET_X-4,NET_TOP,8,GROUND-NET_TOP);
   ctx.strokeStyle='rgba(100,116,139,.9)'; ctx.lineWidth=1;
   for(let y=NET_TOP+6;y<GROUND;y+=14){ ctx.beginPath(); ctx.moveTo(NET_X-4,y); ctx.lineTo(NET_X+4,y); ctx.stroke(); }
   ctx.fillStyle='#16a34a'; ctx.fillRect(NET_X-6,NET_TOP-6,12,8);
-  drawPlayer(me.x,me.y,me.color,me.name,true);
-  drawPlayer(foe.x,foe.y,foe.color,foe.name,false);
+  // postes + placar na areia
+  ctx.fillStyle='#44403c'; ctx.fillRect(NET_X-46,NET_TOP-40,8,GROUND-NET_TOP+40); ctx.fillRect(NET_X+38,NET_TOP-40,8,GROUND-NET_TOP+40);
+  ctx.fillStyle='rgba(2,6,23,.75)'; roundRect(30,240,170,52,8); ctx.fill();
+  ctx.fillStyle='#facc15'; ctx.font='bold 20px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(`${score.L} — ${score.R}`,115,268);
+  ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.fillText('TORRES GÊMEAS',115,284);
+  drawPlayer(me.x,me.y,me.color,me.name,true,me);
+  drawPlayer(foe.x,foe.y,foe.color,foe.name,false,foe);
+  // poeira da areia
+  for(const d of dust){ ctx.globalAlpha=Math.max(0,d.life*2); ctx.fillStyle='#fde68a'; ctx.beginPath(); ctx.arc(d.x,d.y,3.5,0,7); ctx.fill(); }
+  ctx.globalAlpha=1;
   let bx=ball.x,by=ball.y;
   if(phase==='serve'){
     const sx=server==='L'?((mySide==='L'||(isHost&&server==='L'))?me.x:200):(mySide==='R'?me.x:760);
@@ -450,7 +590,8 @@ function drawWorld(now){
       ctx.beginPath(); ctx.arc(bx,by,BALL_R+7,0,7); ctx.stroke();
     }
   }
-  // bola de futebol
+  // bola de futebol (com sombra na areia)
+  ctx.fillStyle='rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(bx,GROUND+8,12,4,0,0,7); ctx.fill();
   ctx.save(); ctx.translate(bx,by); ctx.rotate(ballRot);
   ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(0,0,BALL_R,0,7); ctx.fill();
   ctx.fillStyle='#0f172a';
@@ -484,7 +625,7 @@ function draw(now){
   if(phase==='serve'){ const left=Math.max(0,1-(performance.now()-phaseT)/15000);
     ctx.fillStyle='#7f1d1d'; ctx.fillRect(W/2-190,54,380,6); ctx.fillStyle='#22c55e'; ctx.fillRect(W/2-190,54,380*left,6); }
 }
-function loop(now){ requestAnimationFrame(loop); const dt=Math.min(.05,(now-last)/1000); last=now; if(mode==='online'||mode==='offline') step(dt,now); }
+function loop(now){ requestAnimationFrame(loop); const dt=Math.min(.05,(now-last)/1000); last=now; if(mode==='online'||mode==='offline'||mode==='tutorial') step(dt,now); }
 
 // ---------- HUD/chat ----------
 function updateHUD(){
@@ -499,6 +640,11 @@ function toast(t){ $('toast').textContent=t; clearTimeout(toastT); toastT=setTim
 // ---------- entrada ----------
 window.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
+  if(mode==='tutorial'){
+    if(k==='a'||k==='d'||k==='arrowleft'||k==='arrowright'){ tutNeed.move=true; updateTutPractice('✅ Movimento ok! Agora continue.'); }
+    if(k==='w'||k==='arrowup'||k===' '){ tutNeed.jump=true; updateTutPractice('✅ Pulo ok! Boa impulsão!'); }
+    if(/^[jkliuo]$/.test(k)){ tutNeed.key=true; updateTutPractice(`✅ Toque <b>${k.toUpperCase()}</b> registrado! Isso vale ponto na levantada/finalização.`); }
+  }
   if(document.activeElement===$('chatIn')||document.activeElement===$('name')||document.activeElement===$('customCode')){ if(e.key==='Enter'&&document.activeElement===$('chatIn'))sendChat(); return; }
   if(document.activeElement&&document.activeElement.tagName==='BUTTON'&&(k===' '||k.indexOf('arrow')===0)) e.preventDefault();
   keys[k=== ' '?' ':k]=true;
